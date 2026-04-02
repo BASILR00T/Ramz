@@ -103,7 +103,7 @@ The full password and its complete SHA-1 hash never leave the device.
 
 ## Content Security Policy
 
-Web app CSP (`next.config.ts`):
+Web app CSP (production only, via `apps/web/app/layout.tsx` `<meta http-equiv="Content-Security-Policy">`):
 
 ```
 default-src 'self'
@@ -116,12 +116,14 @@ connect-src 'self'
   https://urlscan.io
   https://safebrowsing.googleapis.com
   https://api.pwnedpasswords.com
-  https://phishtank.org
+  https://checkurl.phishtank.com
 font-src 'self'
 frame-ancestors 'none'
 ```
 
-Tauri app has an additional CSP in `tauri.conf.json` enforced at the WebView level.
+Notes:
+- Next.js `output: "export"` does not support `headers()` in `next.config.ts`, so CSP must be set by the host/CDN or injected via HTML.
+- The desktop app has an additional CSP in `apps/desktop/src-tauri/tauri.conf.json` enforced at the WebView level (dev CSP is relaxed to allow dev tooling).
 
 ---
 

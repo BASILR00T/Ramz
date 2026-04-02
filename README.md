@@ -62,15 +62,15 @@ pnpm install
 ### Run Web
 
 ```bash
-pnpm --filter web dev
+pnpm --filter @ramz/web dev
 # Opens http://localhost:3000
 ```
 
 ### Run Desktop
 
 ```bash
-pnpm --filter web build    # build static web first
-pnpm --filter desktop dev  # launch Tauri window
+pnpm --filter @ramz/web dev   # keep this running on :3000
+pnpm --filter desktop dev     # launch Tauri window (devUrl)
 ```
 
 ### Run Mobile

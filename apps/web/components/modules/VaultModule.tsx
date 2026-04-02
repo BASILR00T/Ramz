@@ -59,7 +59,8 @@ function passwordStrength(pw: string): { score: number; label: string } {
   if (/[0-9]/.test(pw)) score++;
   if (/[^A-Za-z0-9]/.test(pw)) score++;
   const labels = ["ضعيفة جداً", "ضعيفة", "متوسطة", "جيدة", "قوية", "ممتازة"];
-  return { score, label: labels[Math.min(score, 5)] };
+  const idx = Math.min(score, 5);
+  return { score, label: labels[idx] ?? labels[0] ?? "" };
 }
 
 // ── Entry Form ────────────────────────────────────────────────────────────────
@@ -450,11 +451,11 @@ export default function VaultModule({ vault, onSave }: VaultModuleProps) {
         <div className="module-header">
           <h2>{mode === "add" ? "إضافة سجل جديد" : "تعديل السجل"}</h2>
         </div>
-        <EntryForm
-          initial={editing ?? undefined}
-          onSave={handleSave}
-          onCancel={cancel}
-        />
+        {editing ? (
+          <EntryForm initial={editing} onSave={handleSave} onCancel={cancel} />
+        ) : (
+          <EntryForm onSave={handleSave} onCancel={cancel} />
+        )}
       </section>
     );
   }

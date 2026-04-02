@@ -12,6 +12,7 @@ build/
 
 # Desktop (Tauri)
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
 
 # Mobile (Expo)
 apps/mobile/.expo/
@@ -32,6 +33,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+.claude/
 
 # Logs
 *.log

@@ -89,3 +89,14 @@ export function extractUrls(text: string): string[] {
   // Deduplicate and limit
   return [...new Set(matches)].slice(0, 10);
 }
+
+// ── Module-facing wrapper ─────────────────────────────────────────────────────
+
+/**
+ * Check a URL or text for phishing indicators.
+ * Returns { score (0–100), flags: string[] }.
+ */
+export function checkPhishing(urlOrText: string): { score: number; flags: string[] } {
+  const result = heuristicPhishing(urlOrText);
+  return { score: result.score, flags: result.indicators };
+}

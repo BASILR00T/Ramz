@@ -121,7 +121,7 @@ Tauri 2 with minimal Rust backend. The frontend is the Next.js static build (`ap
 
 ### Build Flow
 ```
-pnpm --filter web build     →  apps/web/out/  (static files)
+pnpm --filter @ramz/web build     →  apps/web/out/  (static files)
 pnpm --filter desktop build →  bundles out/ + Rust binary → .exe/.app/.deb
 ```
 

@@ -154,7 +154,7 @@ export default function ApiKeysModule({ apiKeys, onSave }: ApiKeysModuleProps) {
             docUrl={doc}
             value={draft[field]}
             onChange={(v) => set(field, v)}
-            required={required}
+            required={required ?? false}
           />
         ))}
 

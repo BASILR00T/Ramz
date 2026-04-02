@@ -249,9 +249,10 @@ export default function ScannerModule({ apiKeys, onHistory }: ScannerModuleProps
       {!hasAny && (
         <div className="info-banner">
           <IC.Key />
-          <span>
-            أضف مفاتيح API في قسم «مفاتيح API» لتفعيل الفحص السحابي.
-            الفحص الهيورستيكي للروابط متاح دائماً بدون مفاتيح.
+          <span className="bidi">
+            أضف مفاتيح <bdi dir="ltr" className="code">API</bdi> في قسم «مفاتيح{" "}
+            <bdi dir="ltr" className="code">API</bdi>» لتفعيل الفحص السحابي. الفحص
+            الهيورستيكي للروابط متاح دائماً بدون مفاتيح.
           </span>
         </div>
       )}
@@ -308,11 +309,14 @@ export default function ScannerModule({ apiKeys, onHistory }: ScannerModuleProps
           {heuristicsUrl && <HeuristicsPanel url={heuristicsUrl} />}
 
           {results?.map((r, i) => (
-            <ResultCard key={i} label={r.label} verdict={r.verdict} raw={r.raw} />
+            <ResultCard key={i} label={r.label} verdict={r.verdict} raw={r.raw ?? null} />
           ))}
 
           {results?.length === 0 && !heuristicsUrl && (
-            <p className="muted">لم يُجرَ أي فحص. أضف مفاتيح API أو أدخل رابطاً.</p>
+            <p className="muted bidi">
+              لم يُجرَ أي فحص. أضف مفاتيح <bdi dir="ltr" className="code">API</bdi>{" "}
+              أو أدخل رابطاً.
+            </p>
           )}
         </div>
       )}

@@ -83,11 +83,36 @@ export default function ExtensionModule() {
                 <div className="step-browsers">
                   <div className="step-browser">
                     <IC.Globe />
-                    <span><strong>Chrome/Edge:</strong> {step.chrome}</span>
+                    <span className="bidi">
+                      <strong className="ltr">Chrome/Edge</strong>{" "}
+                      {step.n === 1 ? (
+                        <>
+                          اذهب إلى <bdi dir="ltr" className="code">chrome://extensions</bdi>{" "}
+                          أو من القائمة: أدوات ← إضافات
+                        </>
+                      ) : (
+                        step.chrome
+                      )}
+                    </span>
                   </div>
                   <div className="step-browser">
                     <IC.Globe />
-                    <span><strong>Firefox:</strong> {step.firefox}</span>
+                    <span className="bidi">
+                      <strong className="ltr">Firefox</strong>{" "}
+                      {step.n === 1 ? (
+                        <>
+                          اذهب إلى <bdi dir="ltr" className="code">about:addons</bdi>{" "}
+                          أو من القائمة: الإضافات والتسجيلات
+                        </>
+                      ) : step.n === 3 ? (
+                        <>
+                          انقر &quot;تثبيت الإضافة من الملف&quot; واختر{" "}
+                          <bdi dir="ltr" className="code">manifest.json</bdi>
+                        </>
+                      ) : (
+                        step.firefox
+                      )}
+                    </span>
                   </div>
                 </div>
               </div>

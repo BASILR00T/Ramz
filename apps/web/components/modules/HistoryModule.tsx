@@ -15,15 +15,17 @@ const TYPE_LABELS: Record<string, string> = {
   email: "بريد",
 };
 
-const VERDICT_LABELS: Record<string, { label: string; cls: string }> = {
+type Verdict = HistoryEntry["verdict"];
+
+const VERDICT_LABELS: Record<Verdict, { label: string; cls: string }> = {
   clean:      { label: "آمن",    cls: "clean" },
   suspicious: { label: "مشبوه", cls: "suspicious" },
   malicious:  { label: "خطير",  cls: "malicious" },
   unknown:    { label: "غير معروف", cls: "unknown" },
 };
 
-function VerdictBadge({ verdict }: { verdict: string }) {
-  const v = VERDICT_LABELS[verdict] ?? VERDICT_LABELS.unknown;
+function VerdictBadge({ verdict }: { verdict: Verdict }) {
+  const v = VERDICT_LABELS[verdict];
   return <span className={`result-badge ${v.cls}`}>{v.label}</span>;
 }
 

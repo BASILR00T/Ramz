@@ -2,8 +2,9 @@
   "name": "@ramz/web",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -11,15 +12,15 @@
     "clean": "rm -rf .next out"
   },
   "dependencies": {
-    "@ramz/core": "*",
+    "@ramz/core": "workspace:*",
     "next": "^16.1.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.7.3"
   }
 }

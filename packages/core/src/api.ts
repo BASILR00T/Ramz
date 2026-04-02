@@ -4,7 +4,7 @@
  * API keys never leave the device.
  */
 
-import type { HibpBreach } from "./types.js";
+import type { HibpBreach, ScanResult } from "./types.js";
 
 // ── VirusTotal v3 ────────────────────────────────────────────────────────────
 
@@ -198,4 +198,134 @@ export async function phishTankCheck(url: string): Promise<unknown> {
   });
   if (!r.ok) throw new Error(`PhishTank ${r.status}`);
   return r.json();
+}
+
+// ── Module-facing wrapper functions ──────────────────────────────────────────
+
+/**
+ * Scan a URL via VirusTotal v3 (default) or urlscan.io.
+ * Returns a normalised ScanResult with positives / total.
+ */
+export async function scanUrl(
+  url: string,
+  apiKey: string,
+  provider: "vt" | "urlscan" = "vt"
+): Promise<ScanResult> {
+  if (provider === "urlscan") {
+    const { uuid } = await urlscanSubmit(apiKey, url);
+    // Poll up to 20s for result
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const res = await urlscanResult(uuid) as { verdicts?: { overall?: { malicious?: boolean; score?: number } } };
+        const malicious = res?.verdicts?.overall?.malicious ?? false;
+        return { positives: malicious ? 1 : 0, total: 1 };
+      } catch {
+        /* result not ready yet */
+      }
+    }
+    return { error: "urlscan result not ready after 20s" };
+  }
+
+  // VirusTotal — fetch cached report first
+  try {
+    const data = await vtScanUrl(apiKey, url) as {
+      data?: { attributes?: { last_analysis_stats?: { malicious?: number; suspicious?: number; undetected?: number; harmless?: number } } }
+    };
+    const stats = data?.data?.attributes?.last_analysis_stats;
+    if (stats) {
+      const positives = (stats.malicious ?? 0) + (stats.suspicious ?? 0);
+      const total = positives + (stats.undetected ?? 0) + (stats.harmless ?? 0);
+      return { positives, total };
+    }
+  } catch {
+    // No cached report — submit and poll
+  }
+  try {
+    await vtSubmitUrl(apiKey, url);
+    await new Promise((r) => setTimeout(r, 4000));
+    const data = await vtScanUrl(apiKey, url) as {
+      data?: { attributes?: { last_analysis_stats?: { malicious?: number; suspicious?: number; undetected?: number; harmless?: number } } }
+    };
+    const stats = data?.data?.attributes?.last_analysis_stats;
+    if (stats) {
+      const positives = (stats.malicious ?? 0) + (stats.suspicious ?? 0);
+      const total = positives + (stats.undetected ?? 0) + (stats.harmless ?? 0);
+      return { positives, total };
+    }
+  } catch (e) {
+    return { error: String(e) };
+  }
+  return { error: "لا توجد نتيجة من VirusTotal" };
+}
+
+/**
+ * Scan a file via VirusTotal v3.
+ * Checks cached hash report first, uploads if not found.
+ */
+export async function scanFile(file: File, apiKey: string): Promise<ScanResult> {
+  try {
+    // Try hash lookup first (faster, no upload needed)
+    const buf  = await file.arrayBuffer();
+    const hash = await crypto.subtle.digest("SHA-256", buf);
+    const hex  = Array.from(new Uint8Array(hash))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const cached = await vtScanFile(apiKey, hex) as {
+      data?: { attributes?: { last_analysis_stats?: { malicious?: number; suspicious?: number; undetected?: number; harmless?: number } } }
+    } | null;
+    if (cached?.data?.attributes?.last_analysis_stats) {
+      const stats = cached.data.attributes.last_analysis_stats;
+      const positives = (stats.malicious ?? 0) + (stats.suspicious ?? 0);
+      const total = positives + (stats.undetected ?? 0) + (stats.harmless ?? 0);
+      return { positives, total };
+    }
+  } catch {
+    /* hash not cached — upload */
+  }
+  try {
+    const submitted = await vtScanFileBinary(apiKey, file) as { data?: { id?: string } };
+    const analysisId = submitted?.data?.id;
+    if (analysisId) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const analysisRes = await fetch(
+        `https://www.virustotal.com/api/v3/analyses/${analysisId}`,
+        { headers: { "x-apikey": apiKey } }
+      );
+      const analysis = await analysisRes.json() as {
+        data?: { attributes?: { stats?: { malicious?: number; suspicious?: number; undetected?: number; harmless?: number } } }
+      };
+      const stats = analysis?.data?.attributes?.stats;
+      if (stats) {
+        const positives = (stats.malicious ?? 0) + (stats.suspicious ?? 0);
+        const total = positives + (stats.undetected ?? 0) + (stats.harmless ?? 0);
+        return { positives, total };
+      }
+    }
+  } catch (e) {
+    return { error: String(e) };
+  }
+  return { error: "لا توجد نتيجة من VirusTotal" };
+}
+
+/**
+ * Check an email against HIBP breaches.
+ */
+export async function checkHIBP(
+  email: string,
+  apiKey: string
+): Promise<{ breaches: HibpBreach[] }> {
+  const breaches = await hibpCheckEmail(apiKey, email);
+  return { breaches };
+}
+
+/**
+ * Check a URL against Google Safe Browsing v4.
+ */
+export async function checkGoogleSafeBrowsing(
+  url: string,
+  apiKey: string
+): Promise<{ matches: Array<{ threatType: string }> }> {
+  const result = await gsbLookup(apiKey, url);
+  return { matches: result.matches ?? [] };
 }

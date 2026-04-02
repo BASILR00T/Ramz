@@ -86,7 +86,7 @@ export default function IdentityModule({ apiKeys, onHistory }: IdentityModulePro
       const text = await res.text();
       const lines = text.split("\n");
       const match = lines.find((l) => l.startsWith(suffix));
-      const count = match ? parseInt(match.split(":")[1], 10) : 0;
+      const count = match ? parseInt(match.split(":")[1] ?? "0", 10) : 0;
 
       setPwResult({ pwned: count > 0, count });
     } catch (err) {

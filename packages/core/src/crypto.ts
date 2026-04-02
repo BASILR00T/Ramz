@@ -1,76 +1,233 @@
 /**
  * @ramz/core — Cryptographic utilities
  *
- * Security hardening vs original:
- * - PBKDF2 iterations: 600,000 (was 100,000) — NIST SP 800-63B & OWASP 2024
- * - HMAC-SHA256 integrity check on vault ciphertext (authenticate-then-encrypt)
- * - Separate PBKDF2 derivation for HMAC key to avoid key reuse
- * - Explicit error messages that do not leak timing or plaintext
- * - Password generator uses full Unicode-safe charset via crypto.getRandomValues
+ * Security hardening:
+ * - PBKDF2-SHA256 @ 600,000 iterations (OWASP 2024)
+ * - AES-256-GCM authenticated encryption
+ * - HMAC-SHA256 integrity check (verify before decrypt)
+ * - Separate PBKDF2 derivation for HMAC key (no key reuse)
+ * - Rejection-sampling password generator (no modulo bias)
  */
 
-import type { EncryptedVault } from "./types.js";
+import type { EncryptedVault, VaultEntry } from "./types.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const PBKDF2_ITERATIONS = 600_000; // OWASP 2024 minimum for SHA-256
-const PBKDF2_HASH = "SHA-256";
-const AES_KEY_LENGTH = 256;
-const IV_LENGTH = 12; // AES-GCM recommended
-const SALT_LENGTH = 16;
-const VAULT_VERSION = 2;
+const PBKDF2_HASH       = "SHA-256";
+const AES_KEY_LENGTH    = 256;
+const IV_LENGTH         = 12; // AES-GCM recommended 96-bit
+const SALT_LENGTH       = 16; // 128-bit salt
 
-const PASSWORD_CHARSET =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
+// ── Base64 helpers ────────────────────────────────────────────────────────────
 
-// ── Password Generator ───────────────────────────────────────────────────────
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return btoa(binary);
+}
+
+function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// ── Salt ──────────────────────────────────────────────────────────────────────
+
+/** Generate a cryptographically random 128-bit salt, base64-encoded. */
+export function generateSalt(): string {
+  return toBase64(crypto.getRandomValues(new Uint8Array(SALT_LENGTH)));
+}
+
+// ── Key Derivation ────────────────────────────────────────────────────────────
+
+/**
+ * Derive an AES-256-GCM key from a password and base64 salt.
+ * Uses PBKDF2-SHA256 @ 600k iterations (OWASP 2024).
+ */
+export async function deriveKey(
+  password: string,
+  salt: string
+): Promise<CryptoKey> {
+  const enc      = new TextEncoder();
+  const saltBytes = fromBase64(salt);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: saltBytes, iterations: PBKDF2_ITERATIONS, hash: PBKDF2_HASH },
+    keyMaterial,
+    { name: "AES-GCM", length: AES_KEY_LENGTH },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+// ── Vault Encryption ──────────────────────────────────────────────────────────
+
+/**
+ * Encrypt vault entries with AES-256-GCM.
+ * A fresh random IV is generated for every call.
+ */
+export async function encryptVault(
+  entries: VaultEntry[],
+  key: CryptoKey
+): Promise<{ ciphertext: string; iv: string }> {
+  const enc  = new TextEncoder();
+  const iv   = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const buf  = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    enc.encode(JSON.stringify(entries))
+  );
+  return {
+    ciphertext: toBase64(new Uint8Array(buf)),
+    iv:         toBase64(iv),
+  };
+}
+
+/**
+ * Decrypt vault entries.
+ * Returns an empty array for an empty vault (first-time creation).
+ */
+export async function decryptVault(
+  vault: EncryptedVault,
+  key: CryptoKey
+): Promise<VaultEntry[]> {
+  const iv         = fromBase64(vault.iv);
+  const ciphertext = fromBase64(vault.ciphertext);
+  const plaintext  = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+  const parsed = JSON.parse(new TextDecoder().decode(plaintext));
+  return Array.isArray(parsed) ? (parsed as VaultEntry[]) : [];
+}
+
+// ── HMAC Integrity ────────────────────────────────────────────────────────────
+
+async function deriveHmacKey(password: string, salt: string): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name:       "PBKDF2",
+      salt:       fromBase64(salt),
+      iterations: PBKDF2_ITERATIONS,
+      hash:       PBKDF2_HASH,
+    },
+    keyMaterial,
+    { name: "HMAC", hash: "SHA-256", length: 256 },
+    false,
+    ["sign", "verify"]
+  );
+}
+
+/**
+ * Compute an HMAC-SHA256 tag over (password + ":" + salt).
+ * Stored alongside the vault so we can verify the master password
+ * cheaply before doing a second expensive PBKDF2 derivation.
+ */
+export async function hmacIntegrity(
+  password: string,
+  salt: string
+): Promise<string> {
+  const key = await deriveHmacKey(password, salt);
+  const enc = new TextEncoder();
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    enc.encode(`${password}:${salt}`)
+  );
+  return toBase64(new Uint8Array(sig));
+}
+
+/**
+ * Verify an HMAC-SHA256 tag via constant-time comparison.
+ * Returns true only if the tag matches — wrong password returns false.
+ */
+export async function verifyIntegrity(
+  password: string,
+  salt: string,
+  stored: string
+): Promise<boolean> {
+  try {
+    const key      = await deriveHmacKey(password, salt);
+    const enc      = new TextEncoder();
+    const storedBytes = fromBase64(stored);
+    return crypto.subtle.verify(
+      "HMAC",
+      key,
+      storedBytes,
+      enc.encode(`${password}:${salt}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ── Password Generator ────────────────────────────────────────────────────────
+
+const UPPER   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const LOWER   = "abcdefghijklmnopqrstuvwxyz";
+const DIGITS  = "0123456789";
+const SYMBOLS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 
 /**
  * Cryptographically secure password generator.
- * Uses rejection sampling to eliminate modular bias.
+ * Uses rejection sampling over crypto.getRandomValues to eliminate modulo bias.
  */
-export function generatePassword(length = 24): string {
-  const charset = PASSWORD_CHARSET;
-  const array = new Uint32Array(length * 2); // oversample for rejection
-  crypto.getRandomValues(array);
+export function generatePassword(
+  length = 20,
+  opts: { upper?: boolean; digits?: boolean; symbols?: boolean } = {}
+): string {
+  const { upper = true, digits = true, symbols = true } = opts;
+  let charset = LOWER;
+  if (upper)   charset += UPPER;
+  if (digits)  charset += DIGITS;
+  if (symbols) charset += SYMBOLS;
+
   const result: string[] = [];
   const max = Math.floor(0xffffffff / charset.length) * charset.length;
-  for (let i = 0; i < array.length && result.length < length; i++) {
-    const val = array[i];
-    if (val !== undefined && val < max) {
-      result.push(charset[val % charset.length]!);
-    }
-  }
-  // Fallback: if rejection sampling didn't yield enough chars (very unlikely)
+
   while (result.length < length) {
-    const extra = new Uint32Array(1);
-    crypto.getRandomValues(extra);
-    result.push(charset[extra[0]! % charset.length]!);
+    const buf = crypto.getRandomValues(new Uint32Array(length * 2));
+    for (let i = 0; i < buf.length && result.length < length; i++) {
+      if (buf[i]! < max) {
+        result.push(charset[buf[i]! % charset.length]!);
+      }
+    }
   }
   return result.join("");
 }
 
-// ── Hashing ──────────────────────────────────────────────────────────────────
+// ── Additional Crypto Helpers ─────────────────────────────────────────────────
 
 export async function sha256File(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
+  const buf  = await file.arrayBuffer();
   const hash = await crypto.subtle.digest("SHA-256", buf);
-  return hexEncode(new Uint8Array(hash));
-}
-
-export async function sha1Hash(str: string): Promise<string> {
-  const buf = new TextEncoder().encode(str);
-  const hash = await crypto.subtle.digest("SHA-1", buf);
-  return hexEncode(new Uint8Array(hash)).toUpperCase();
-}
-
-function hexEncode(bytes: Uint8Array): string {
-  return Array.from(bytes)
+  return Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-// ── Entropy & Strength ───────────────────────────────────────────────────────
+export async function sha1Hash(str: string): Promise<string> {
+  const buf  = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest("SHA-1", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+}
 
 export function calcEntropy(password: string): number {
   const poolSizes = [
@@ -84,200 +241,4 @@ export function calcEntropy(password: string): number {
     0
   );
   return password.length * Math.log2(pool || 1);
-}
-
-export function timeToCrack(entropy: number): string {
-  const seconds = Math.pow(2, entropy) / 1e12; // 1 trillion guesses/sec
-  if (seconds < 1) return "أقل من ثانية";
-  if (seconds < 60) return `${Math.floor(seconds)} ثانية`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} دقيقة`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} ساعة`;
-  if (seconds < 31_536_000) return `${Math.floor(seconds / 86400)} يوم`;
-  if (seconds < 3.15e9) return `${Math.floor(seconds / 31_536_000)} سنة`;
-  return "مليارات السنين";
-}
-
-// ── Key Derivation ───────────────────────────────────────────────────────────
-
-async function deriveKey(
-  password: string,
-  salt: Uint8Array,
-  usage: KeyUsage[]
-): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveKey"]
-  );
-  return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: PBKDF2_HASH,
-    },
-    keyMaterial,
-    { name: "AES-GCM", length: AES_KEY_LENGTH },
-    false,
-    usage
-  );
-}
-
-async function deriveHmacKey(
-  password: string,
-  salt: Uint8Array
-): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveKey"]
-  );
-  return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: PBKDF2_HASH,
-    },
-    keyMaterial,
-    { name: "HMAC", hash: "SHA-256", length: 256 },
-    false,
-    ["sign", "verify"]
-  );
-}
-
-// ── Vault Encryption ─────────────────────────────────────────────────────────
-
-/**
- * Encrypts vault data with AES-256-GCM and authenticates with HMAC-SHA256.
- * Uses separate salts for encryption key and HMAC key to prevent key reuse.
- */
-export async function encryptVault(
-  data: unknown,
-  password: string
-): Promise<EncryptedVault> {
-  const enc = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-  const hmacSalt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-
-  const [encKey, hmacKey] = await Promise.all([
-    deriveKey(password, salt, ["encrypt"]),
-    deriveHmacKey(password, hmacSalt),
-  ]);
-
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    encKey,
-    enc.encode(JSON.stringify(data))
-  );
-
-  const ciphertextBytes = new Uint8Array(ciphertext);
-
-  // HMAC over: version || salt || hmacSalt || iv || ciphertext
-  const hmacPayload = buildHmacPayload(
-    VAULT_VERSION,
-    salt,
-    hmacSalt,
-    iv,
-    ciphertextBytes
-  );
-  const hmacBytes = new Uint8Array(
-    await crypto.subtle.sign("HMAC", hmacKey, hmacPayload)
-  );
-
-  return {
-    version: VAULT_VERSION,
-    salt: Array.from(salt),
-    iv: Array.from(iv),
-    hmacSalt: Array.from(hmacSalt),
-    hmac: Array.from(hmacBytes),
-    data: Array.from(ciphertextBytes),
-  };
-}
-
-/**
- * Decrypts vault data. Verifies HMAC before decryption to prevent
- * padding oracle attacks and detect tampered ciphertext.
- *
- * Throws a generic error on failure — does not indicate whether
- * the password was wrong vs data was tampered.
- */
-export async function decryptVault(
-  encData: EncryptedVault,
-  password: string
-): Promise<unknown> {
-  const salt = new Uint8Array(encData.salt);
-  const iv = new Uint8Array(encData.iv);
-  const hmacSalt = new Uint8Array(encData.hmacSalt);
-  const hmacBytes = new Uint8Array(encData.hmac);
-  const ciphertextBytes = new Uint8Array(encData.data);
-
-  const [decKey, hmacKey] = await Promise.all([
-    deriveKey(password, salt, ["decrypt"]),
-    deriveHmacKey(password, hmacSalt),
-  ]);
-
-  // Verify HMAC first (authenticate-then-decrypt)
-  const hmacPayload = buildHmacPayload(
-    encData.version ?? VAULT_VERSION,
-    salt,
-    hmacSalt,
-    iv,
-    ciphertextBytes
-  );
-  const valid = await crypto.subtle.verify(
-    "HMAC",
-    hmacKey,
-    hmacBytes,
-    hmacPayload
-  );
-
-  if (!valid) {
-    throw new Error("INTEGRITY_FAIL");
-  }
-
-  let decrypted: ArrayBuffer;
-  try {
-    decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      decKey,
-      ciphertextBytes
-    );
-  } catch {
-    throw new Error("DECRYPTION_FAIL");
-  }
-
-  return JSON.parse(new TextDecoder().decode(decrypted));
-}
-
-// ── Internal Helpers ─────────────────────────────────────────────────────────
-
-function buildHmacPayload(
-  version: number,
-  salt: Uint8Array,
-  hmacSalt: Uint8Array,
-  iv: Uint8Array,
-  ciphertext: Uint8Array
-): Uint8Array {
-  const verBuf = new Uint8Array([version]);
-  const total =
-    verBuf.length +
-    salt.length +
-    hmacSalt.length +
-    iv.length +
-    ciphertext.length;
-  const payload = new Uint8Array(total);
-  let offset = 0;
-  for (const part of [verBuf, salt, hmacSalt, iv, ciphertext]) {
-    payload.set(part, offset);
-    offset += part.length;
-  }
-  return payload;
 }

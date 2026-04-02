@@ -31,7 +31,7 @@ Ramz/
 pnpm install          # install all workspaces
 pnpm dev              # dev all (web on :3000)
 pnpm build            # build all
-pnpm --filter web dev           # web only
+pnpm --filter @ramz/web dev     # web only
 pnpm --filter desktop dev       # Tauri dev (requires web running)
 pnpm --filter mobile start      # Expo start
 ```
@@ -99,7 +99,7 @@ All keys stored in localStorage (web) / SecureStore (mobile). Never hardcode.
 - `output: 'export'` in `next.config.ts` — static build required for Tauri
 - `robots: "noindex, nofollow"` in `layout.tsx` — security tool, must not index
 - `AUTO_LOCK_MS` below 300000ms (5 min) without user config
-- CSP headers in `next.config.ts`
+- CSP (prod-only `<meta http-equiv="Content-Security-Policy">` in `apps/web/app/layout.tsx` and `apps/desktop/src-tauri/tauri.conf.json`)
 
 ---
 

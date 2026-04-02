@@ -45,6 +45,26 @@ export default function RootLayout({
       dir="rtl"
       className={`${tajawal.variable} ${spaceMono.variable}`}
     >
+      {process.env.NODE_ENV === "production" && (
+        <head>
+          <meta
+            httpEquiv="Content-Security-Policy"
+            content={[
+              "default-src 'self'",
+              // API calls to external security services
+              "connect-src 'self' https://www.virustotal.com https://urlscan.io https://haveibeenpwned.com https://api.pwnedpasswords.com https://safebrowsing.googleapis.com https://checkurl.phishtank.com",
+              "script-src 'self' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline'",
+              "font-src 'self' data:",
+              "img-src 'self' data: https:",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "frame-ancestors 'none'",
+              "form-action 'self'",
+            ].join("; ")}
+          />
+        </head>
+      )}
       <body className="antialiased">{children}</body>
     </html>
   );
